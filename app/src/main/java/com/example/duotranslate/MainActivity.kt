@@ -48,6 +48,10 @@ class MainActivity : ComponentActivity() {
     private val accentChoices = mapOf("en" to listOf("US", "GB", "AU", "IN"), "es" to listOf("US", "MX", "ES", "AR", "CO"))
     private val log = mutableStateListOf<String>()
     private var dark by mutableStateOf<Boolean?>(null)
+    private var room by mutableStateOf("")
+    @Volatile private var roomTopic: String? = null
+    @Volatile private var roomConn: HttpURLConnection? = null
+    private val me = java.util.UUID.randomUUID().toString().take(8)
 
     private val permLauncher = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {}
 
@@ -114,8 +118,13 @@ class MainActivity : ComponentActivity() {
                     Choice(myLang == "es", "Hablo español") { myLang = "es" }
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedButton({ host() }) { Text("Host") }
-                    OutlinedButton({ join() }) { Text("Join") }
+                    OutlinedButton({ host() }) { Text("Host nearby") }
+                    OutlinedButton({ join() }) { Text("Join nearby") }
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    OutlinedTextField(room, { v -> room = v.uppercase().filter { it in 'A'..'Z' || it in '0'..'9' }.take(8) }, Modifier.weight(1f), label = { Text("Room code") }, singleLine = true)
+                    OutlinedButton({ joinRoom() }) { Text("Join room") }
+                    OutlinedButton({ room = newCode(); joinRoom() }) { Text("New") }
                 }
                 Button({ micOn = !micOn; if (micOn) listen() else recognizer?.destroy() }, Modifier.fillMaxWidth()) {
                     Text(if (micOn) "Mic ON (tap to stop)" else "Start talking")
@@ -139,7 +148,7 @@ class MainActivity : ComponentActivity() {
         speaking = false
         recognizer?.destroy()
         tts?.stop()
-        status = if (one) "Tap the language being spoken" else if (peer != null) "Connected" else "Not connected"
+        status = if (one) "Tap the language being spoken" else if (peer != null) "Connected" else if (roomTopic != null) "In room $room" else "Not connected"
     }
 
     private fun soloTap(lang: String) {
@@ -161,7 +170,83 @@ class MainActivity : ComponentActivity() {
         }, { soloLang = null })
     }
 
+    private fun newCode() = (1..6).map { "ABCDEFGHJKMNPQRSTUVWXYZ23456789".random() }.joinToString("")
+
+    private fun joinRoom() {
+        val code = room
+        if (code.length < 4) {
+            status = "Type a room code (4+ letters) or tap New"
+            return
+        }
+        leaveRoom()
+        client.stopAllEndpoints()
+        peer = null
+        val topic = "duotranslate-$code"
+        roomTopic = topic
+        status = "Joining room $code"
+        Thread {
+            while (roomTopic == topic) {
+                try {
+                    val c = URL("https://ntfy.sh/$topic/json").openConnection() as HttpURLConnection
+                    roomConn = c
+                    c.connectTimeout = 8000
+                    c.readTimeout = 120000
+                    c.inputStream.bufferedReader().useLines { lines ->
+                        for (line in lines) {
+                            if (line.isBlank()) continue
+                            val json = JSONObject(line)
+                            when (json.optString("event")) {
+                                "open" -> {
+                                    runOnUiThread { status = "In room $code, waiting for the other phone" }
+                                    runCatching { publish(topic, "$me|!|") }
+                                }
+                                "message" -> roomMessage(code, topic, json.optString("message"))
+                            }
+                        }
+                    }
+                } catch (e: Exception) {
+                    if (roomTopic == topic) runOnUiThread { status = "Room connection lost, retrying" }
+                }
+                if (roomTopic == topic) Thread.sleep(5000)
+            }
+        }.start()
+    }
+
+    private fun roomMessage(code: String, topic: String, msg: String) {
+        val p = msg.split("|", limit = 3)
+        if (p.size != 3 || p[0] == me) return
+        if (p[1].startsWith("!")) {
+            runOnUiThread { status = "In room $code, other phone connected" }
+            if (p[1] == "!") runCatching { publish(topic, "$me|!!|") }
+        } else {
+            runOnUiThread { incoming(p[1], p[2]) }
+        }
+    }
+
+    private fun publish(topic: String, msg: String) {
+        val c = URL("https://ntfy.sh/$topic").openConnection() as HttpURLConnection
+        try {
+            c.connectTimeout = 8000
+            c.readTimeout = 8000
+            c.requestMethod = "POST"
+            c.doOutput = true
+            c.setRequestProperty("Cache", "no")
+            c.outputStream.use { it.write(msg.toByteArray()) }
+            if (c.responseCode == 429) runOnUiThread { status = "Sending too fast for the free relay, wait a few seconds" }
+        } finally {
+            c.disconnect()
+        }
+    }
+
+    private fun leaveRoom() {
+        roomTopic = null
+        val c = roomConn
+        roomConn = null
+        if (c != null) Thread { c.disconnect() }.start()
+    }
+
     private fun host() {
+        leaveRoom()
         status = "Starting host…"
         client.startAdvertising("phone", serviceId, connCb, AdvertisingOptions.Builder().setStrategy(strategy).build())
             .addOnSuccessListener { status = "Waiting for the other phone…" }
@@ -169,6 +254,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun join() {
+        leaveRoom()
         status = "Starting search…"
         client.startDiscovery(serviceId, discCb, DiscoveryOptions.Builder().setStrategy(strategy).build())
             .addOnSuccessListener { status = "Searching…" }
@@ -320,6 +406,7 @@ class MainActivity : ComponentActivity() {
     private fun send(text: String) {
         log.add("You: $text")
         peer?.let { client.sendPayload(it, Payload.fromBytes("$myLang|$text".toByteArray(Charsets.UTF_8))) }
+        roomTopic?.let { t -> Thread { runCatching { publish(t, "$me|$myLang|$text") } }.start() }
     }
 
     private fun listen() {
@@ -360,6 +447,7 @@ class MainActivity : ComponentActivity() {
         recognizer?.destroy()
         tts?.shutdown()
         client.stopAllEndpoints()
+        leaveRoom()
         translators.values.forEach { it.close() }
     }
 }
