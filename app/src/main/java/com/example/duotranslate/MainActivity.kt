@@ -36,6 +36,8 @@ class MainActivity : ComponentActivity() {
     private var micOn by mutableStateOf(false)
     private var solo by mutableStateOf(false)
     private var soloLang by mutableStateOf<String?>(null)
+    private val accents = mutableStateMapOf<String, String>()
+    private val accentChoices = mapOf("en" to listOf("US", "GB", "AU", "IN"), "es" to listOf("US", "MX", "ES", "AR", "CO"))
     private val log = mutableStateListOf<String>()
 
     private val permLauncher = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {}
@@ -43,6 +45,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         client = Nearby.getConnectionsClient(this)
+        for (lang in accentChoices.keys) getPreferences(MODE_PRIVATE).getString("accent_$lang", null)?.let { accents[lang] = it }
         tts = TextToSpeech(this) {}
         tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
             override fun onStart(id: String?) {}
@@ -76,7 +79,10 @@ class MainActivity : ComponentActivity() {
                 Choice(solo, "One phone") { setMode(true) }
             }
             Text(status)
-            Text("Accents: ${locale("en").toLanguageTag()}, ${locale("es").toLanguageTag()}", style = MaterialTheme.typography.bodySmall)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                TextButton({ nextAccent("en") }) { Text("English: ${locale("en").displayCountry}") }
+                TextButton({ nextAccent("es") }) { Text("Español: ${locale("es").displayCountry}") }
+            }
             if (solo) {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Button({ soloTap("en") }, Modifier.weight(1f)) { Text(if (soloLang == "en") "Listening…" else "Speak English") }
@@ -208,7 +214,15 @@ class MainActivity : ComponentActivity() {
         if (tts?.speak(text, TextToSpeech.QUEUE_ADD, null, "u") != TextToSpeech.SUCCESS) resume()
     }
 
+    private fun nextAccent(lang: String) {
+        val list = accentChoices.getValue(lang)
+        val next = list[(list.indexOf(locale(lang).country) + 1) % list.size]
+        accents[lang] = next
+        getPreferences(MODE_PRIVATE).edit().putString("accent_$lang", next).apply()
+    }
+
     private fun locale(lang: String): Locale {
+        accents[lang]?.let { return Locale(lang, it) }
         val sys = resources.configuration.locales
         for (i in 0 until sys.size()) {
             if (sys[i].language == lang && sys[i].country.isNotEmpty()) return Locale(lang, sys[i].country)
