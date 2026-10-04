@@ -18,6 +18,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.google.android.gms.nearby.Nearby
 import com.google.android.gms.nearby.connection.*
+import com.google.android.gms.tasks.Tasks
 import com.google.mlkit.nl.translate.*
 import java.util.Locale
 
@@ -240,7 +241,11 @@ class MainActivity : ComponentActivity() {
             Translation.getClient(TranslatorOptions.Builder().setSourceLanguage(src).setTargetLanguage(tgt).build())
         }
         t.downloadModelIfNeeded()
-            .addOnSuccessListener { t.translate(text).addOnSuccessListener(done) }
+            .addOnSuccessListener {
+                val sentences = text.split(Regex("(?<=[.?!])\\s+")).filter { it.isNotBlank() }
+                Tasks.whenAllSuccess<String>(sentences.map { t.translate(it) })
+                    .addOnSuccessListener { done(it.joinToString(" ")) }
+            }
             .addOnFailureListener { status = "Translation model needs internet once to download" }
     }
 
@@ -278,6 +283,7 @@ class MainActivity : ComponentActivity() {
         rec.startListening(Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
             putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
             putExtra(RecognizerIntent.EXTRA_LANGUAGE, locale(lang).toLanguageTag())
+            if (Build.VERSION.SDK_INT >= 33) putExtra(RecognizerIntent.EXTRA_ENABLE_FORMATTING, RecognizerIntent.FORMATTING_OPTIMIZE_QUALITY)
         })
     }
 
