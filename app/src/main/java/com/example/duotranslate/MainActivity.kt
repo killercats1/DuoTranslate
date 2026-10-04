@@ -46,12 +46,19 @@ class MainActivity : ComponentActivity() {
             override fun onStart(id: String?) {}
             override fun onError(id: String?) { resume() }
             override fun onDone(id: String?) { resume() }
-        })
-        val perms = mutableListOf(Manifest.permission.RECORD_AUDIO)
-        if (Build.VERSION.SDK_INT >= 31) perms += listOf(Manifest.permission.BLUETOOTH_SCAN, Manifest.permission.BLUETOOTH_ADVERTISE, Manifest.permission.BLUETOOTH_CONNECT)
-        perms += listOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION)
-        else perms += Manifest.permission.ACCESS_FINE_LOCATION
-        if (Build.VERSION.SDK_INT >= 33) perms += Manifest.permission.NEARBY_WIFI_DEVICES
+        val perms = mutableListOf(
+            Manifest.permission.RECORD_AUDIO,
+            Manifest.permission.ACCESS_FINE_LOCATION,
+            Manifest.permission.ACCESS_COARSE_LOCATION
+        )
+        if (Build.VERSION.SDK_INT >= 31) {
+            perms.add(Manifest.permission.BLUETOOTH_SCAN)
+            perms.add(Manifest.permission.BLUETOOTH_ADVERTISE)
+            perms.add(Manifest.permission.BLUETOOTH_CONNECT)
+        }
+        if (Build.VERSION.SDK_INT >= 33) {
+            perms.add(Manifest.permission.NEARBY_WIFI_DEVICES)
+        }
         permLauncher.launch(perms.toTypedArray())
 
         setContent { MaterialTheme { Screen() } }
