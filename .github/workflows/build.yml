@@ -9,6 +9,13 @@ jobs:
         with: { distribution: temurin, java-version: 17 }
       - uses: gradle/actions/setup-gradle@v4
         with: { gradle-version: 8.7 }
+      - name: Check Gemini key
+        continue-on-error: true
+        env: { GEMINI_API_KEY: "${{ secrets.GEMINI_API_KEY }}" }
+        run: |
+          curl -sS -w '\nHTTP %{http_code}\n' -H "x-goog-api-key: $GEMINI_API_KEY" -H 'Content-Type: application/json' \
+            -d '{"system_instruction":{"parts":[{"text":"Translate from Spanish to English. Reply with only the translation."}]},"contents":[{"parts":[{"text":"Hola como te llamas me llamo Juan"}]}]}' \
+            https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent
       - run: gradle assembleDebug --stacktrace
         env: { GEMINI_API_KEY: "${{ secrets.GEMINI_API_KEY }}" }
       - uses: actions/upload-artifact@v4
