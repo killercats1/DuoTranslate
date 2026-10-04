@@ -32,7 +32,7 @@ class MainActivity : ComponentActivity() {
     private val translators = HashMap<String, Translator>()
 
     private var status by mutableStateOf("Not connected")
-    private var myLang by mutableStateOf("en") // "en" or "es"
+    private var myLang by mutableStateOf("en")
     private var micOn by mutableStateOf(false)
     private val log = mutableStateListOf<String>()
 
@@ -96,21 +96,33 @@ class MainActivity : ComponentActivity() {
             client.requestConnection("phone", id, connCb)
                 .addOnFailureListener { status = "Connect failed: ${it.message}" }
         }
+        override fun onEndpointLost(id: String) {}
+    }
 
     private val connCb = object : ConnectionLifecycleCallback() {
-        override fun onConnectionInitiated(id: String, info: ConnectionInfo) { client.acceptConnection(id, payloadCb) }
+        override fun onConnectionInitiated(id: String, info: ConnectionInfo) {
+            client.acceptConnection(id, payloadCb)
+        }
         override fun onConnectionResult(id: String, r: ConnectionResolution) {
             if (r.status.isSuccess) {
-                peer = id; status = "Connected"
-                client.stopAdvertising(); client.stopDiscovery()
-            } else status = "Connection failed, try again"
+                peer = id
+                status = "Connected"
+                client.stopAdvertising()
+                client.stopDiscovery()
+            } else {
+                status = "Connection failed: ${r.status.statusMessage ?: r.status.statusCode}"
+            }
         }
-        override fun onDisconnected(id: String) { peer = null; status = "Disconnected" }
+        override fun onDisconnected(id: String) {
+            peer = null
+            status = "Disconnected"
+        }
     }
 
     private val payloadCb = object : PayloadCallback() {
         override fun onPayloadReceived(id: String, p: Payload) {
-            val msg = String(p.asBytes() ?: return, Charsets.UTF_8)
+            val bytes = p.asBytes() ?: return
+            val msg = String(bytes, Charsets.UTF_8)
             val parts = msg.split("|", limit = 2)
             if (parts.size == 2) runOnUiThread { incoming(parts[0], parts[1]) }
         }
@@ -129,7 +141,10 @@ class MainActivity : ComponentActivity() {
         tts?.speak(text, TextToSpeech.QUEUE_ADD, null, "u")
     }
 
-    private fun resume() { speaking = false; Handler(Looper.getMainLooper()).post { listen() } }
+    private fun resume() {
+        speaking = false
+        Handler(Looper.getMainLooper()).post { listen() }
+    }
 
     private fun translate(src: String, tgt: String, text: String, done: (String) -> Unit) {
         val t = translators.getOrPut("$src$tgt") {
@@ -148,34 +163,36 @@ class MainActivity : ComponentActivity() {
     private fun listen() {
         if (!micOn || speaking) return
         recognizer?.destroy()
-        recognizer = SpeechRecognizer.createSpeechRecognizer(this).apply {
-            setRecognitionListener(object : RecognitionListener {
-                override fun onResults(b: Bundle?) {
-                    b?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull()?.let { send(it) }
-                    listen()
-                }
-                override fun onError(e: Int) {
-                    if (e != SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS)
-                        Handler(Looper.getMainLooper()).postDelayed({ listen() }, 400)
-                }
-                override fun onReadyForSpeech(p: Bundle?) {}
-                override fun onBeginningOfSpeech() {}
-                override fun onRmsChanged(v: Float) {}
-                override fun onBufferReceived(b: ByteArray?) {}
-                override fun onEndOfSpeech() {}
-                override fun onPartialResults(b: Bundle?) {}
-                override fun onEvent(t: Int, b: Bundle?) {}
-            })
-            startListening(Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-                putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-                putExtra(RecognizerIntent.EXTRA_LANGUAGE, if (myLang == "es") "es-ES" else "en-US")
-            })
-        }
+        val rec = SpeechRecognizer.createSpeechRecognizer(this)
+        recognizer = rec
+        rec.setRecognitionListener(object : RecognitionListener {
+            override fun onResults(b: Bundle?) {
+                b?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull()?.let { send(it) }
+                listen()
+            }
+            override fun onError(e: Int) {
+                if (e != SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS)
+                    Handler(Looper.getMainLooper()).postDelayed({ listen() }, 400)
+            }
+            override fun onReadyForSpeech(p: Bundle?) {}
+            override fun onBeginningOfSpeech() {}
+            override fun onRmsChanged(v: Float) {}
+            override fun onBufferReceived(b: ByteArray?) {}
+            override fun onEndOfSpeech() {}
+            override fun onPartialResults(b: Bundle?) {}
+            override fun onEvent(t: Int, b: Bundle?) {}
+        })
+        rec.startListening(Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE, if (myLang == "es") "es-ES" else "en-US")
+        })
     }
 
     override fun onDestroy() {
         super.onDestroy()
-        recognizer?.destroy(); tts?.shutdown(); client.stopAllEndpoints()
+        recognizer?.destroy()
+        tts?.shutdown()
+        client.stopAllEndpoints()
         translators.values.forEach { it.close() }
     }
 }
