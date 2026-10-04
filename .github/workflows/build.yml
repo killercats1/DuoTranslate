@@ -13,11 +13,13 @@ jobs:
         continue-on-error: true
         env: { GEMINI_API_KEY: "${{ secrets.GEMINI_API_KEY }}" }
         run: |
-          for m in gemini-3.5-flash gemini-3.8-flash; do
-            echo "== $m"
-            curl -sS -w '\nHTTP %{http_code}\n' -H "x-goog-api-key: $GEMINI_API_KEY" -H 'Content-Type: application/json' \
-              -d '{"system_instruction":{"parts":[{"text":"Translate from Spanish to English. Reply with only the translation."}]},"contents":[{"parts":[{"text":"Hola como te llamas me llamo Juan"}]}]}' \
-              https://generativelanguage.googleapis.com/v1beta/models/$m:generateContent
+          for m in gemini-3.5-flash gemini-3.8-flash gemini-3.5-flash-lite; do
+            for level in minimal low; do
+              echo "== $m $level"
+              curl -sS -w '\nHTTP %{http_code} in %{time_total}s\n' -H "x-goog-api-key: $GEMINI_API_KEY" -H 'Content-Type: application/json' \
+                -d '{"system_instruction":{"parts":[{"text":"Translate from Spanish to English. Reply with only the translation."}]},"contents":[{"parts":[{"text":"Hola como te llamas me llamo Juan"}]}],"generationConfig":{"thinkingConfig":{"thinkingLevel":"'$level'"}}}' \
+                https://generativelanguage.googleapis.com/v1beta/models/$m:generateContent
+            done
           done
       - run: gradle assembleDebug --stacktrace
         env: { GEMINI_API_KEY: "${{ secrets.GEMINI_API_KEY }}" }
