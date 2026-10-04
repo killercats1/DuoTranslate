@@ -20,7 +20,12 @@ import com.google.android.gms.nearby.Nearby
 import com.google.android.gms.nearby.connection.*
 import com.google.android.gms.tasks.Tasks
 import com.google.mlkit.nl.translate.*
+import java.net.HttpURLConnection
+import java.net.URL
+import java.net.URLEncoder
 import java.util.Locale
+import org.json.JSONArray
+import org.json.JSONObject
 
 class MainActivity : ComponentActivity() {
     private val serviceId = "com.example.duotranslate"
@@ -237,6 +242,53 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun translate(src: String, tgt: String, text: String, done: (String) -> Unit) {
+        Thread {
+            val online = runCatching { gemini(src, tgt, text) }.getOrNull()
+                ?: runCatching { myMemory(src, tgt, text) }.getOrNull()
+            runOnUiThread { if (online != null) done(online) else translateOffline(src, tgt, text, done) }
+        }.start()
+    }
+
+    private fun gemini(src: String, tgt: String, text: String): String? {
+        if (BuildConfig.GEMINI_API_KEY.isEmpty()) return null
+        val names = mapOf("en" to "English", "es" to "Spanish")
+        val prompt = "You translate a live spoken conversation from ${names[src]} to ${names[tgt]}. " +
+            "The text comes from speech recognition, so it may have no punctuation and may run several sentences together. " +
+            "Reply with only the natural ${names[tgt]} translation and nothing else."
+        fun parts(s: String) = JSONObject().put("parts", JSONArray().put(JSONObject().put("text", s)))
+        val body = JSONObject().put("system_instruction", parts(prompt)).put("contents", JSONArray().put(parts(text)))
+        val c = URL("https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent").openConnection() as HttpURLConnection
+        try {
+            c.connectTimeout = 5000
+            c.readTimeout = 8000
+            c.requestMethod = "POST"
+            c.doOutput = true
+            c.setRequestProperty("Content-Type", "application/json")
+            c.setRequestProperty("x-goog-api-key", BuildConfig.GEMINI_API_KEY)
+            c.outputStream.use { it.write(body.toString().toByteArray()) }
+            val json = JSONObject(c.inputStream.bufferedReader().readText())
+            return json.getJSONArray("candidates").getJSONObject(0).getJSONObject("content")
+                .getJSONArray("parts").getJSONObject(0).getString("text").trim().ifEmpty { null }
+        } finally {
+            c.disconnect()
+        }
+    }
+
+    private fun myMemory(src: String, tgt: String, text: String): String? {
+        val c = URL("https://api.mymemory.translated.net/get?q=${URLEncoder.encode(text, "UTF-8")}&langpair=$src%7C$tgt").openConnection() as HttpURLConnection
+        try {
+            c.connectTimeout = 5000
+            c.readTimeout = 8000
+            val json = JSONObject(c.inputStream.bufferedReader().readText())
+            if (json.optInt("responseStatus") != 200) return null
+            val out = json.getJSONObject("responseData").getString("translatedText")
+            return android.text.Html.fromHtml(out, 0).toString().trim().ifEmpty { null }
+        } finally {
+            c.disconnect()
+        }
+    }
+
+    private fun translateOffline(src: String, tgt: String, text: String, done: (String) -> Unit) {
         val t = translators.getOrPut("$src$tgt") {
             Translation.getClient(TranslatorOptions.Builder().setSourceLanguage(src).setTargetLanguage(tgt).build())
         }

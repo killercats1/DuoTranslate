@@ -2,8 +2,8 @@ plugins { id("com.android.application"); id("org.jetbrains.kotlin.android") }
 android {
     namespace = "com.example.duotranslate"
     compileSdk = 34
-    defaultConfig { applicationId = "com.example.duotranslate"; minSdk = 26; targetSdk = 34; versionCode = 1; versionName = "1.0" }
-    buildFeatures { compose = true }
+    defaultConfig { applicationId = "com.example.duotranslate"; minSdk = 26; targetSdk = 34; versionCode = 1; versionName = "1.0"; buildConfigField("String", "GEMINI_API_KEY", "\"${System.getenv("GEMINI_API_KEY") ?: ""}\"") }
+    buildFeatures { compose = true; buildConfig = true }
     packaging { resources { excludes += "/META-INF/{AL2.0,LGPL2.1}" } }
     composeOptions { kotlinCompilerExtensionVersion = "1.5.14" }
     compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
