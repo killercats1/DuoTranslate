@@ -243,13 +243,13 @@ class MainActivity : ComponentActivity() {
 
     private fun translate(src: String, tgt: String, text: String, done: (String) -> Unit) {
         Thread {
-            val online = runCatching { gemini(src, tgt, text) }.getOrNull()
+            val online = listOf("gemini-3.5-flash", "gemini-3.8-flash").firstNotNullOfOrNull { runCatching { gemini(it, src, tgt, text) }.getOrNull() }
                 ?: runCatching { myMemory(src, tgt, text) }.getOrNull()
             runOnUiThread { if (online != null) done(online) else translateOffline(src, tgt, text, done) }
         }.start()
     }
 
-    private fun gemini(src: String, tgt: String, text: String): String? {
+    private fun gemini(model: String, src: String, tgt: String, text: String): String? {
         if (BuildConfig.GEMINI_API_KEY.isEmpty()) return null
         val names = mapOf("en" to "English", "es" to "Spanish")
         val prompt = "You translate a live spoken conversation from ${names[src]} to ${names[tgt]}. " +
@@ -257,7 +257,7 @@ class MainActivity : ComponentActivity() {
             "Reply with only the natural ${names[tgt]} translation and nothing else."
         fun parts(s: String) = JSONObject().put("parts", JSONArray().put(JSONObject().put("text", s)))
         val body = JSONObject().put("system_instruction", parts(prompt)).put("contents", JSONArray().put(parts(text)))
-        val c = URL("https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent").openConnection() as HttpURLConnection
+        val c = URL("https://generativelanguage.googleapis.com/v1beta/models/$model:generateContent").openConnection() as HttpURLConnection
         try {
             c.connectTimeout = 5000
             c.readTimeout = 8000

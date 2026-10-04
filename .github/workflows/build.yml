@@ -13,9 +13,12 @@ jobs:
         continue-on-error: true
         env: { GEMINI_API_KEY: "${{ secrets.GEMINI_API_KEY }}" }
         run: |
-          curl -sS -w '\nHTTP %{http_code}\n' -H "x-goog-api-key: $GEMINI_API_KEY" -H 'Content-Type: application/json' \
-            -d '{"system_instruction":{"parts":[{"text":"Translate from Spanish to English. Reply with only the translation."}]},"contents":[{"parts":[{"text":"Hola como te llamas me llamo Juan"}]}]}' \
-            https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent
+          for m in gemini-3.5-flash gemini-3.8-flash; do
+            echo "== $m"
+            curl -sS -w '\nHTTP %{http_code}\n' -H "x-goog-api-key: $GEMINI_API_KEY" -H 'Content-Type: application/json' \
+              -d '{"system_instruction":{"parts":[{"text":"Translate from Spanish to English. Reply with only the translation."}]},"contents":[{"parts":[{"text":"Hola como te llamas me llamo Juan"}]}]}' \
+              https://generativelanguage.googleapis.com/v1beta/models/$m:generateContent
+          done
       - run: gradle assembleDebug --stacktrace
         env: { GEMINI_API_KEY: "${{ secrets.GEMINI_API_KEY }}" }
       - uses: actions/upload-artifact@v4
