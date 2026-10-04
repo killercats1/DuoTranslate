@@ -243,7 +243,7 @@ class MainActivity : ComponentActivity() {
 
     private fun translate(src: String, tgt: String, text: String, done: (String) -> Unit) {
         Thread {
-            val online = listOf("gemini-3.5-flash", "gemini-3.8-flash").firstNotNullOfOrNull { runCatching { gemini(it, src, tgt, text) }.getOrNull() }
+            val online = listOf("gemini-3.5-flash-lite", "gemini-3.8-flash").firstNotNullOfOrNull { runCatching { gemini(it, src, tgt, text) }.getOrNull() }
                 ?: runCatching { myMemory(src, tgt, text) }.getOrNull()
             runOnUiThread { if (online != null) done(online) else translateOffline(src, tgt, text, done) }
         }.start()
@@ -257,6 +257,7 @@ class MainActivity : ComponentActivity() {
             "Reply with only the natural ${names[tgt]} translation and nothing else."
         fun parts(s: String) = JSONObject().put("parts", JSONArray().put(JSONObject().put("text", s)))
         val body = JSONObject().put("system_instruction", parts(prompt)).put("contents", JSONArray().put(parts(text)))
+            .put("generationConfig", JSONObject().put("thinkingConfig", JSONObject().put("thinkingLevel", "low")))
         val c = URL("https://generativelanguage.googleapis.com/v1beta/models/$model:generateContent").openConnection() as HttpURLConnection
         try {
             c.connectTimeout = 5000
