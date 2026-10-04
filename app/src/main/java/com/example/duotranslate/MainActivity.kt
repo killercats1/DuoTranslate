@@ -76,6 +76,7 @@ class MainActivity : ComponentActivity() {
                 Choice(solo, "One phone") { setMode(true) }
             }
             Text(status)
+            Text("Accents: ${locale("en").toLanguageTag()}, ${locale("es").toLanguageTag()}", style = MaterialTheme.typography.bodySmall)
             if (solo) {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Button({ soloTap("en") }, Modifier.weight(1f)) { Text(if (soloLang == "en") "Listening…" else "Speak English") }
@@ -198,13 +199,21 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun speak(text: String, lang: String) {
-        val r = tts?.setLanguage(if (lang == "es") Locale("es", "ES") else Locale.US)
+        val r = tts?.setLanguage(locale(lang))
         if (r == null || r == TextToSpeech.LANG_MISSING_DATA || r == TextToSpeech.LANG_NOT_SUPPORTED) {
             status = "No ${if (lang == "es") "Spanish" else "English"} voice installed on this phone (Settings > Text-to-speech)"
             resume()
             return
         }
         if (tts?.speak(text, TextToSpeech.QUEUE_ADD, null, "u") != TextToSpeech.SUCCESS) resume()
+    }
+
+    private fun locale(lang: String): Locale {
+        val sys = resources.configuration.locales
+        for (i in 0 until sys.size()) {
+            if (sys[i].language == lang && sys[i].country.isNotEmpty()) return Locale(lang, sys[i].country)
+        }
+        return Locale(lang, "US")
     }
 
     private fun resume() {
@@ -254,7 +263,7 @@ class MainActivity : ComponentActivity() {
         })
         rec.startListening(Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
             putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-            putExtra(RecognizerIntent.EXTRA_LANGUAGE, if (lang == "es") "es-ES" else "en-US")
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE, locale(lang).toLanguageTag())
         })
     }
 
