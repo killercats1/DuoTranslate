@@ -1,0 +1,2 @@
+# DuoTranslate
+Real time translation
