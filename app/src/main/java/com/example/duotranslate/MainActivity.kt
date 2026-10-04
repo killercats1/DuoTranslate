@@ -34,6 +34,8 @@ class MainActivity : ComponentActivity() {
     private var status by mutableStateOf("Not connected")
     private var myLang by mutableStateOf("en")
     private var micOn by mutableStateOf(false)
+    private var solo by mutableStateOf(false)
+    private var soloLang by mutableStateOf<String?>(null)
     private val log = mutableStateListOf<String>()
 
     private val permLauncher = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {}
@@ -69,20 +71,66 @@ class MainActivity : ComponentActivity() {
     fun Screen() {
         Column(Modifier.fillMaxSize().systemBarsPadding().padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Text("Duo Translate", style = MaterialTheme.typography.headlineSmall)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Choice(!solo, "Two phones") { setMode(false) }
+                Choice(solo, "One phone") { setMode(true) }
+            }
             Text(status)
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                if (myLang == "en") Button({ myLang = "en" }) { Text("I speak English") } else OutlinedButton({ myLang = "en" }) { Text("I speak English") }
-                if (myLang == "es") Button({ myLang = "es" }) { Text("Hablo español") } else OutlinedButton({ myLang = "es" }) { Text("Hablo español") }
-            }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton({ host() }) { Text("Host") }
-                OutlinedButton({ join() }) { Text("Join") }
-            }
-            Button({ micOn = !micOn; if (micOn) listen() else recognizer?.destroy() }, Modifier.fillMaxWidth()) {
-                Text(if (micOn) "Mic ON (tap to stop)" else "Start talking")
+            if (solo) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button({ soloTap("en") }, Modifier.weight(1f)) { Text(if (soloLang == "en") "Listening…" else "Speak English") }
+                    Button({ soloTap("es") }, Modifier.weight(1f)) { Text(if (soloLang == "es") "Escuchando…" else "Hablar español") }
+                }
+            } else {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Choice(myLang == "en", "I speak English") { myLang = "en" }
+                    Choice(myLang == "es", "Hablo español") { myLang = "es" }
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton({ host() }) { Text("Host") }
+                    OutlinedButton({ join() }) { Text("Join") }
+                }
+                Button({ micOn = !micOn; if (micOn) listen() else recognizer?.destroy() }, Modifier.fillMaxWidth()) {
+                    Text(if (micOn) "Mic ON (tap to stop)" else "Start talking")
+                }
             }
             LazyColumn(verticalArrangement = Arrangement.spacedBy(6.dp)) { items(log.reversed()) { Text(it) } }
         }
+    }
+
+    @Composable
+    fun Choice(selected: Boolean, label: String, onClick: () -> Unit) {
+        if (selected) Button(onClick) { Text(label) } else OutlinedButton(onClick) { Text(label) }
+    }
+
+    private fun setMode(one: Boolean) {
+        if (solo == one) return
+        solo = one
+        micOn = false
+        soloLang = null
+        speaking = false
+        recognizer?.destroy()
+        tts?.stop()
+        status = if (one) "Tap the language being spoken" else if (peer != null) "Connected" else "Not connected"
+    }
+
+    private fun soloTap(lang: String) {
+        tts?.stop()
+        if (soloLang == lang) {
+            recognizer?.destroy()
+            soloLang = null
+            return
+        }
+        soloLang = lang
+        val other = if (lang == "en") "es" else "en"
+        recognize(lang, { text ->
+            soloLang = null
+            log.add("${lang.uppercase()}: $text")
+            translate(lang, other, text) {
+                log.add("${other.uppercase()}: $it")
+                speak(it, other)
+            }
+        }, { soloLang = null })
     }
 
     private fun host() {
@@ -146,7 +194,11 @@ class MainActivity : ComponentActivity() {
         log.add("Them: $text")
         speaking = true
         recognizer?.destroy()
-        tts?.language = Locale(myLang)
+        speak(text, myLang)
+    }
+
+    private fun speak(text: String, lang: String) {
+        tts?.language = Locale(lang)
         tts?.speak(text, TextToSpeech.QUEUE_ADD, null, "u")
     }
 
@@ -171,18 +223,22 @@ class MainActivity : ComponentActivity() {
 
     private fun listen() {
         if (!micOn || speaking) return
+        recognize(myLang, { send(it); listen() }, { e ->
+            if (e != SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS)
+                Handler(Looper.getMainLooper()).postDelayed({ listen() }, 400)
+        })
+    }
+
+    private fun recognize(lang: String, onText: (String) -> Unit, onFail: (Int) -> Unit) {
         recognizer?.destroy()
         val rec = SpeechRecognizer.createSpeechRecognizer(this)
         recognizer = rec
         rec.setRecognitionListener(object : RecognitionListener {
             override fun onResults(b: Bundle?) {
-                b?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull()?.let { send(it) }
-                listen()
+                val text = b?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull()
+                if (text != null) onText(text) else onFail(SpeechRecognizer.ERROR_NO_MATCH)
             }
-            override fun onError(e: Int) {
-                if (e != SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS)
-                    Handler(Looper.getMainLooper()).postDelayed({ listen() }, 400)
-            }
+            override fun onError(e: Int) { onFail(e) }
             override fun onReadyForSpeech(p: Bundle?) {}
             override fun onBeginningOfSpeech() {}
             override fun onRmsChanged(v: Float) {}
@@ -193,7 +249,7 @@ class MainActivity : ComponentActivity() {
         })
         rec.startListening(Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
             putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-            putExtra(RecognizerIntent.EXTRA_LANGUAGE, if (myLang == "es") "es-ES" else "en-US")
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE, if (lang == "es") "es-ES" else "en-US")
         })
     }
 
