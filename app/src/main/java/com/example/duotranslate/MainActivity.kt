@@ -77,19 +77,25 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun host() {
-        status = "Waiting for the other phone…"
+        status = "Starting host…"
         client.startAdvertising("phone", serviceId, connCb, AdvertisingOptions.Builder().setStrategy(strategy).build())
+            .addOnSuccessListener { status = "Waiting for the other phone…" }
+            .addOnFailureListener { status = "Host failed: ${it.message}" }
     }
 
     private fun join() {
-        status = "Searching…"
+        status = "Starting search…"
         client.startDiscovery(serviceId, discCb, DiscoveryOptions.Builder().setStrategy(strategy).build())
+            .addOnSuccessListener { status = "Searching…" }
+            .addOnFailureListener { status = "Search failed: ${it.message}" }
     }
 
     private val discCb = object : EndpointDiscoveryCallback() {
-        override fun onEndpointFound(id: String, info: DiscoveredEndpointInfo) { client.requestConnection("phone", id, connCb) }
-        override fun onEndpointLost(id: String) {}
-    }
+        override fun onEndpointFound(id: String, info: DiscoveredEndpointInfo) {
+            status = "Found a phone, connecting…"
+            client.requestConnection("phone", id, connCb)
+                .addOnFailureListener { status = "Connect failed: ${it.message}" }
+        }
 
     private val connCb = object : ConnectionLifecycleCallback() {
         override fun onConnectionInitiated(id: String, info: ConnectionInfo) { client.acceptConnection(id, payloadCb) }
