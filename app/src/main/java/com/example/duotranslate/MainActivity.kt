@@ -9,11 +9,13 @@ import android.speech.tts.UtteranceProgressListener
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.google.android.gms.nearby.Nearby
@@ -45,6 +47,7 @@ class MainActivity : ComponentActivity() {
     private val accents = mutableStateMapOf<String, String>()
     private val accentChoices = mapOf("en" to listOf("US", "GB", "AU", "IN"), "es" to listOf("US", "MX", "ES", "AR", "CO"))
     private val log = mutableStateListOf<String>()
+    private var dark by mutableStateOf<Boolean?>(null)
 
     private val permLauncher = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {}
 
@@ -52,6 +55,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         client = Nearby.getConnectionsClient(this)
         for (lang in accentChoices.keys) getPreferences(MODE_PRIVATE).getString("accent_$lang", null)?.let { accents[lang] = it }
+        if (getPreferences(MODE_PRIVATE).contains("dark")) dark = getPreferences(MODE_PRIVATE).getBoolean("dark", false)
         tts = TextToSpeech(this) {}
         tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
             override fun onStart(id: String?) {}
@@ -73,13 +77,23 @@ class MainActivity : ComponentActivity() {
         }
         permLauncher.launch(perms.toTypedArray())
 
-        setContent { MaterialTheme { Screen() } }
+        setContent {
+            MaterialTheme(if (dark ?: isSystemInDarkTheme()) darkColorScheme() else lightColorScheme()) {
+                Surface(Modifier.fillMaxSize()) { Screen() }
+            }
+        }
     }
 
     @Composable
     fun Screen() {
         Column(Modifier.fillMaxSize().systemBarsPadding().padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Text("Duo Translate", style = MaterialTheme.typography.headlineSmall)
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                Text("Duo Translate", style = MaterialTheme.typography.headlineSmall)
+                val isDark = dark ?: isSystemInDarkTheme()
+                TextButton({ dark = !isDark; getPreferences(MODE_PRIVATE).edit().putBoolean("dark", !isDark).apply() }) {
+                    Text(if (isDark) "Light mode" else "Dark mode")
+                }
+            }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Choice(!solo, "Two phones") { setMode(false) }
                 Choice(solo, "One phone") { setMode(true) }
@@ -107,6 +121,7 @@ class MainActivity : ComponentActivity() {
                     Text(if (micOn) "Mic ON (tap to stop)" else "Start talking")
                 }
             }
+            TextButton({ log.clear() }, Modifier.align(Alignment.End)) { Text("Clear chat") }
             LazyColumn(verticalArrangement = Arrangement.spacedBy(6.dp)) { items(log.reversed()) { Text(it) } }
         }
     }
