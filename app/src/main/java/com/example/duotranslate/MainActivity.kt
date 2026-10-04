@@ -46,6 +46,7 @@ class MainActivity : ComponentActivity() {
             override fun onStart(id: String?) {}
             override fun onError(id: String?) { resume() }
             override fun onDone(id: String?) { resume() }
+        })
         val perms = mutableListOf(
             Manifest.permission.RECORD_AUDIO,
             Manifest.permission.ACCESS_FINE_LOCATION,
