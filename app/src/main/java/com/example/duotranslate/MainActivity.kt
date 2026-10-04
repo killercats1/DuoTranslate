@@ -198,8 +198,13 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun speak(text: String, lang: String) {
-        tts?.language = Locale(lang)
-        tts?.speak(text, TextToSpeech.QUEUE_ADD, null, "u")
+        val r = tts?.setLanguage(if (lang == "es") Locale("es", "ES") else Locale.US)
+        if (r == null || r == TextToSpeech.LANG_MISSING_DATA || r == TextToSpeech.LANG_NOT_SUPPORTED) {
+            status = "No ${if (lang == "es") "Spanish" else "English"} voice installed on this phone (Settings > Text-to-speech)"
+            resume()
+            return
+        }
+        if (tts?.speak(text, TextToSpeech.QUEUE_ADD, null, "u") != TextToSpeech.SUCCESS) resume()
     }
 
     private fun resume() {
