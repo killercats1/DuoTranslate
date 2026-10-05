@@ -16,7 +16,15 @@ jobs:
           curl -sS -w '\nHTTP %{http_code} in %{time_total}s\n' -H "x-goog-api-key: $GEMINI_API_KEY" -H 'Content-Type: application/json' \
             -d '{"system_instruction":{"parts":[{"text":"Translate from Spanish to English. Reply with only the translation."}]},"contents":[{"parts":[{"text":"Hola como te llamas me llamo Juan"}]}],"generationConfig":{"thinkingConfig":{"thinkingLevel":"low"}}}' \
             https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent
-      - run: gradle assembleDebug --stacktrace
-        env: { GEMINI_API_KEY: "${{ secrets.GEMINI_API_KEY }}" }
+      - name: Restore signing key
+        env: { KEYSTORE_BASE64: "${{ secrets.KEYSTORE_BASE64 }}" }
+        run: echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.p12"
+      - run: gradle assembleRelease --stacktrace
+        env:
+          GEMINI_API_KEY: "${{ secrets.GEMINI_API_KEY }}"
+          KEYSTORE_FILE: "${{ runner.temp }}/release.p12"
+          KEYSTORE_PASSWORD: "${{ secrets.KEYSTORE_PASSWORD }}"
+      - name: Show APK signature
+        run: $ANDROID_HOME/build-tools/$(ls $ANDROID_HOME/build-tools | sort -V | tail -1)/apksigner verify --print-certs app/build/outputs/apk/release/*.apk
       - uses: actions/upload-artifact@v4
-        with: { name: DuoTranslate-apk, path: app/build/outputs/apk/debug/app-debug.apk }
+        with: { name: DuoTranslate-apk, path: app/build/outputs/apk/release/*.apk }
