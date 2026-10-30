@@ -37,6 +37,9 @@ class MainActivity : ComponentActivity() {
     private var recognizer: SpeechRecognizer? = null
     private var peer: String? = null
     private var speaking = false
+    private val pending = HashSet<String>()  // utterances TTS hasn't finished yet, main thread only
+    private var utterances = 0
+    private val main = Handler(Looper.getMainLooper())
     private val translators = HashMap<String, Translator>()
 
     private var status by mutableStateOf("Not connected")
@@ -63,8 +66,8 @@ class MainActivity : ComponentActivity() {
         tts = TextToSpeech(this) {}
         tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
             override fun onStart(id: String?) {}
-            override fun onError(id: String?) { resume() }
-            override fun onDone(id: String?) { resume() }
+            override fun onError(id: String?) { runOnUiThread { spoken(id) } }
+            override fun onDone(id: String?) { runOnUiThread { spoken(id) } }
         })
         val perms = mutableListOf(
             Manifest.permission.RECORD_AUDIO,
@@ -148,11 +151,13 @@ class MainActivity : ComponentActivity() {
         speaking = false
         recognizer?.destroy()
         tts?.stop()
+        pending.clear()
         status = if (one) "Tap the language being spoken" else if (peer != null) "Connected" else if (roomTopic != null) "In room $room" else "Not connected"
     }
 
     private fun soloTap(lang: String) {
         tts?.stop()
+        pending.clear()
         if (soloLang == lang) {
             recognizer?.destroy()
             soloLang = null
@@ -224,6 +229,16 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun publish(topic: String, msg: String) {
+        repeat(3) { attempt ->
+            val code = runCatching { post(topic, msg) }.getOrDefault(-1)
+            if (code in 200..299) return
+            if (code == 429) runOnUiThread { status = "Sending too fast for the free relay, retrying…" }
+            if (attempt < 2) Thread.sleep(if (code == 429) 5000L else 1500L)
+        }
+        runOnUiThread { status = "Couldn't reach the room relay, last message not sent" }
+    }
+
+    private fun post(topic: String, msg: String): Int {
         val c = URL("https://ntfy.sh/$topic").openConnection() as HttpURLConnection
         try {
             c.connectTimeout = 8000
@@ -232,7 +247,7 @@ class MainActivity : ComponentActivity() {
             c.doOutput = true
             c.setRequestProperty("Cache", "no")
             c.outputStream.use { it.write(msg.toByteArray()) }
-            if (c.responseCode == 429) runOnUiThread { status = "Sending too fast for the free relay, wait a few seconds" }
+            return c.responseCode
         } finally {
             c.disconnect()
         }
@@ -318,7 +333,18 @@ class MainActivity : ComponentActivity() {
             resume()
             return
         }
-        if (tts?.speak(text, TextToSpeech.QUEUE_ADD, null, "u") != TextToSpeech.SUCCESS) resume()
+        val id = "u${++utterances}"
+        if (tts?.speak(text, TextToSpeech.QUEUE_ADD, null, id) != TextToSpeech.SUCCESS) {
+            resume()
+            return
+        }
+        pending.add(id)
+        // If the voice engine dies mid-sentence it never reports back, so don't leave the mic off forever
+        main.postDelayed({ spoken(id) }, 20000L + text.length * 150L)
+    }
+
+    private fun spoken(id: String?) {
+        if (id != null && pending.remove(id)) resume()
     }
 
     private fun nextAccent(lang: String) {
@@ -338,8 +364,10 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun resume() {
+        // Keep the mic off until every queued reply has played, or it hears the speaker and sends that back
+        if (pending.isNotEmpty()) return
         speaking = false
-        Handler(Looper.getMainLooper()).post { listen() }
+        main.post { listen() }
     }
 
     private fun translate(src: String, tgt: String, text: String, done: (String) -> Unit) {
@@ -382,8 +410,10 @@ class MainActivity : ComponentActivity() {
             c.connectTimeout = 5000
             c.readTimeout = 8000
             val json = JSONObject(c.inputStream.bufferedReader().readText())
-            if (json.optInt("responseStatus") != 200) return null
+            if (json.optInt("responseStatus") != 200 || json.optBoolean("quotaFinished")) return null
             val out = json.getJSONObject("responseData").getString("translatedText")
+            // Once the free daily quota is used up it sends a warning in place of the translation
+            if (out.startsWith("MYMEMORY WARNING", ignoreCase = true)) return null
             return android.text.Html.fromHtml(out, 0).toString().trim().ifEmpty { null }
         } finally {
             c.disconnect()
@@ -399,6 +429,7 @@ class MainActivity : ComponentActivity() {
                 val sentences = text.split(Regex("(?<=[.?!])\\s+")).filter { it.isNotBlank() }
                 Tasks.whenAllSuccess<String>(sentences.map { t.translate(it) })
                     .addOnSuccessListener { done(it.joinToString(" ")) }
+                    .addOnFailureListener { status = "Couldn't translate: ${it.message}" }
             }
             .addOnFailureListener { status = "Translation model needs internet once to download" }
     }
@@ -412,8 +443,14 @@ class MainActivity : ComponentActivity() {
     private fun listen() {
         if (!micOn || speaking) return
         recognize(myLang, { send(it); listen() }, { e ->
-            if (e != SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS)
-                Handler(Looper.getMainLooper()).postDelayed({ listen() }, 400)
+            if (e == SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS) {
+                micOn = false
+                status = "Microphone permission needed"
+            } else {
+                // Silence is routine; busy or throttled recognizers need a longer breather or they keep failing
+                val quiet = e == SpeechRecognizer.ERROR_NO_MATCH || e == SpeechRecognizer.ERROR_SPEECH_TIMEOUT
+                main.postDelayed({ listen() }, if (quiet) 400L else 2000L)
+            }
         })
     }
 
@@ -444,6 +481,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
+        main.removeCallbacksAndMessages(null)
         recognizer?.destroy()
         tts?.shutdown()
         client.stopAllEndpoints()
